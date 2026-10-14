@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-operations}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-operations_local}
+      POSTGRES_DB: operations
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d operations"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-operations}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-operations_local}
+    ports: ["127.0.0.1:5672:5672", "127.0.0.1:15672:15672"]
+    volumes: ["rabbit-data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  migrate:
+    build: {context: ., dockerfile: backend/Dockerfile}
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-operations}:${POSTGRES_PASSWORD:-operations_local}@postgres:5432/operations
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-operations}:${RABBITMQ_PASSWORD:-operations_local}@rabbitmq:5672
+    command: ["sh", "-c", "npm run db:migrate && node dist/prisma/seed.js"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: on-failure
+  api:
+    build: {context: ., dockerfile: backend/Dockerfile}
+    env_file: backend/.env
+    environment:
+      PORT: 5050
+      DATABASE_URL: postgresql://${POSTGRES_USER:-operations}:${POSTGRES_PASSWORD:-operations_local}@postgres:5432/operations
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-operations}:${RABBITMQ_PASSWORD:-operations_local}@rabbitmq:5672
+    ports: ["127.0.0.1:${API_PORT:-5050}:5050"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5050/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  worker:
+    build: {context: ., dockerfile: backend/Dockerfile}
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-operations}:${POSTGRES_PASSWORD:-operations_local}@postgres:5432/operations
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-operations}:${RABBITMQ_PASSWORD:-operations_local}@rabbitmq:5672
+    command: ["npm", "run", "start:worker"]
+    stop_grace_period: 2m
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+  frontend:
+    build: {context: ., dockerfile: frontend/Dockerfile}
+    environment:
+      VITE_API_URL: http://localhost:${API_PORT:-5050}/api
+    ports: ["127.0.0.1:${FRONTEND_PORT:-5173}:5173"]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  postgres-data:
+  rabbit-data:

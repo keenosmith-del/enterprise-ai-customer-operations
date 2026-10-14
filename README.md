@@ -2,145 +2,98 @@
 
 **LLMOps · Event-Driven Architecture · Prompt Engineering · Distributed Systems**
 
-An enterprise AI customer operations platform designed to automate case classification, intelligent routing and response recommendations through reliable, event-driven processing.
+A working customer operations platform for case triage, response recommendations, human review and prompt evaluation. Manual triage creates delays and inconsistent routing; this application combines asynchronous AI assistance with traceable operator decisions and measurable prompt quality.
 
-The platform combines asynchronous message processing with language model evaluation, prompt versioning, human review and operational monitoring.
+Built as an independent software engineering portfolio project by **Keeno Smith**.
 
-## Overview
+## Implemented capabilities
 
-Customer service operations frequently involve large volumes of incoming requests, inconsistent routing decisions, manual triage and repetitive response workflows.
+- Persist, search and filter customer cases; inspect recommendations, processing history and captured prompt versions.
+- Correct classifications and response drafts, approve recommendations and resolve cases with a human audit trail. AI processing and operator resolution are separate states; drafts are never sent to customers.
+- Process jobs with a separate Node worker through actual RabbitMQ delivery, publisher confirms, manual acknowledgements, transactional outbox, bounded retries, dead-letter archives, lease recovery and idempotent completion.
+- Manage classification/response prompt drafts, compare versions and activate with a real-provider quality gate or explicit audited override.
+- Queue evaluations against 36 labelled synthetic requests, inspect individual outcomes, calculate accuracy/precision/recall/macro-F1/compliance/latency and compare regressions.
+- Inspect real health, worker heartbeat, jobs, retries, failures and safe replay in Operations.
+- Run without AI keys using the clearly labelled deterministic demo provider; configure a Fetch-based OpenAI-compatible endpoint for real inference. Azure Service Bus is optional and contract-tested with stubs.
 
-This project explores how enterprise AI systems can improve those processes while maintaining reliability, traceability and human oversight.
+## Technology and architecture
 
-Rather than implementing a standalone chatbot, the application integrates AI into a distributed customer operations workflow and provides an engineering environment for measuring and improving model behaviour.
+React · Vite · TypeScript · Tailwind CSS · React Router · Lucide · Express · Zod · Prisma · PostgreSQL · RabbitMQ · Azure Service Bus SDK · Docker Compose · Vitest · GitHub Actions.
 
-## Business Problem
+```mermaid
+flowchart LR
+  UI[React operator workspace] --> API[Express API]
+  API --> DB[(PostgreSQL: cases / prompts / evaluations / jobs / outbox)]
+  DB --> Publisher[Outbox publisher in worker]
+  Publisher --> Broker[RabbitMQ or Azure]
+  Broker --> Worker[Independent Node worker]
+  Worker --> Provider[Demo or OpenAI-compatible AI]
+  Worker --> DB
+```
 
-Organizations processing high volumes of support requests face several challenges:
+Delivery is at least once; durable job ownership and unique result records prevent duplicate committed outcomes. API and worker share one backend codebase. Evaluation runs use the same providers, versioned prompts and job system as business cases.
 
-- Manual classification and routing delays.
-- Inconsistent responses across service teams.
-- Limited visibility into AI accuracy and reliability.
-- Processing bottlenecks during high-volume periods.
-- Difficulty evaluating and deploying prompt improvements safely.
-- Incomplete recovery mechanisms when integrations or AI providers fail.
+## Quick start
 
-## Proposed Solution
+Requires Node.js 24 and Docker Desktop. From the repository root:
 
-A full-stack platform combining customer case management, asynchronous processing and an integrated LLMOps evaluation environment.
+```sh
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+# Set your local ADMIN_TOKEN in backend/.env.
+docker compose up -d --build
+```
 
-### Customer Operations
+Compose migrates/seeds PostgreSQL and starts the API, worker, frontend and RabbitMQ. Open http://localhost:5173; enter `ADMIN_TOKEN` using **Operator access** in the sidebar. API: http://localhost:5050/api/health. RabbitMQ management: http://localhost:15672.
 
-- Receive customer cases through REST APIs and external integrations.
-- Classify requests by category, intent and urgency.
-- Generate structured response recommendations using LLMs.
-- Route cases to appropriate service teams.
-- Escalate ambiguous or sensitive cases for human review.
-- Track processing status and operational outcomes.
+For source development:
 
-### AI Engineering & LLMOps
+```sh
+npm ci
+npm exec -w backend -- prisma generate
+docker compose up -d postgres rabbitmq
+npm run db:migrate
+npm run db:seed
+# Run each in a separate terminal:
+npm run dev -w backend
+npm run worker -w backend
+npm run dev -w frontend
+```
 
-- Manage versioned prompt templates.
-- Compare model and prompt configurations.
-- Evaluate outputs against labelled datasets.
-- Measure classification quality, schema compliance and inference performance.
-- Detect prompt regressions before deployment.
-- Track inference latency, token consumption and processing costs.
-- Collect human feedback for continuous evaluation.
+The environment examples default to local RabbitMQ and demo AI. Real provider configuration uses `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`; keys stay on the backend. See [setup](docs/setup.md) for every variable, alternate ports, migrations, Azure and troubleshooting.
 
-### Event-Driven Processing
+## Verification
 
-- Distribute processing tasks through message queues.
-- Support RabbitMQ for local and containerized execution.
-- Support Azure Service Bus through a configurable messaging adapter.
-- Implement retry policies and exponential backoff.
-- Use dead-letter queues for failed messages.
-- Apply idempotency and duplicate-processing protection.
-- Investigate transactional outbox patterns and worker recovery.
+```sh
+npm run typecheck
+npm run lint
+npm test
+npm run build
+# Requires migrated PostgreSQL and RabbitMQ; prefer a disposable test database:
+npm run test:integration
+```
 
-## Technology Stack
+Locally verified on 2026-10-14: **17 backend unit/adapter tests, 6 frontend tests, 9 real PostgreSQL/RabbitMQ integration tests passed**; typecheck, lint and both production builds passed. Full Compose built and started with healthy API/database/broker/independent worker. Browser case creation → asynchronous recommendation → edited approval → resolution → refresh persistence was verified; desktop/mobile/tablet layouts were inspected. Simulation evaluation is pipeline verification, not a real model benchmark.
 
-| Layer                 | Technologies                                             |
-| --------------------- | -------------------------------------------------------- |
-| Frontend              | React, TypeScript, Tailwind CSS                          |
-| Backend API           | Node.js, Express                                         |
-| AI Evaluation Workers | Python                                                   |
-| Database              | PostgreSQL                                               |
-| Messaging             | RabbitMQ, Azure Service Bus                              |
-| AI Integration        | Configurable LLM provider                                |
-| Observability         | OpenTelemetry, Prometheus, Grafana                       |
-| Infrastructure        | Docker, Docker Compose                                   |
-| Testing               | Unit, integration, evaluation and failure-recovery tests |
-| CI/CD                 | GitHub Actions                                           |
+This Mac already has another project on default ports 5432/5050/5173. Ignored local session configuration runs this application at **http://localhost:55173**, API **55050**, PostgreSQL **55432**; committed examples retain requested defaults. Other projects were left untouched.
 
-## Architecture
+## Engineering documentation
 
-The proposed architecture separates the API, messaging infrastructure, processing workers and evaluation functionality.
+- [Architecture and decisions](docs/architecture.md)
+- [REST API contracts](docs/api.md)
+- [Messaging, delivery and recovery](docs/messaging.md)
+- [AI providers, prompt lifecycle and evaluation](docs/ai-llmops.md)
+- [Setup and environment reference](docs/setup.md)
+- [Tests and verification boundaries](docs/testing.md)
+- [Chronological development log](docs/development-log.md)
+- [Version 1 implementation report](docs/version-1-report.md)
 
-**Processing flow:**
+## Status and limits
 
-1. A customer case enters through the REST API.
-2. The application persists the case and records an event for reliable publication.
-3. The messaging adapter publishes the processing event.
-4. Background workers consume and process the event.
-5. An LLM classifies the case and generates a structured recommendation.
-6. Validation rules determine whether human review is required.
-7. Results are persisted and made available to the dashboard.
-8. Evaluation and monitoring services record processing quality and operational metrics.
+Version 1 is implemented and locally verified in demo mode. Live OpenAI-compatible inference and live Azure connectivity remain unverified because no credentials were used. Hosted GitHub Actions has not run during this local session. Azure queue depth is unavailable. Evaluation is serial within a job, and a small synthetic dataset does not establish production accuracy. The local operator token is not production identity/authorization; production needs authentication, role/tenant controls, stronger audit retention/data protection, TLS and operational monitoring. Container frontend uses Vite for the requested local development workflow.
 
-RabbitMQ and Azure Service Bus will be alternative message transport implementations rather than artificially chained messaging systems.
-
-## Engineering Objectives
-
-The project is intended to demonstrate:
-
-- Reliable asynchronous application architecture.
-- Message delivery, acknowledgement and recovery.
-- Distributed worker coordination.
-- Prompt engineering and structured LLM output.
-- Systematic prompt evaluation and regression testing.
-- Human-in-the-loop AI workflows.
-- Event-driven integrations.
-- API and database design.
-- Observability and operational resilience.
-
-## Evaluation & Performance
-
-Planned measurements include:
-
-| Metric                                  | Purpose                           |
-| --------------------------------------- | --------------------------------- |
-| Classification precision, recall and F1 | Evaluate case classification      |
-| Routing accuracy                        | Validate routing decisions        |
-| Schema compliance                       | Verify structured AI outputs      |
-| Response acceptance rate                | Measure human-reviewed usefulness |
-| Queue processing throughput             | Evaluate processing capacity      |
-| End-to-end latency                      | Monitor operational performance   |
-| Retry and recovery outcomes             | Verify messaging reliability      |
-| Token usage and cost per case           | Measure inference efficiency      |
-
-Performance and quality results will be documented after implementation and testing.
-
-## Development Roadmap
-
-- [ ] Phase 1 — Application structure, PostgreSQL schema and REST APIs.
-- [ ] Phase 2 — RabbitMQ integration and asynchronous case processing.
-- [ ] Phase 3 — LLM classification, response generation and prompt management.
-- [ ] Phase 4 — Evaluation datasets, scoring and prompt comparison.
-- [ ] Phase 5 — Human review and operational monitoring.
-- [ ] Phase 6 — Azure Service Bus adapter and reliability testing.
-- [ ] Phase 7 — CI/CD, documentation and deployment.
-
-## Project Status
-
-**Planning and initial repository setup.**
-
-The architecture and functionality described above represent the intended implementation. Completed features, test results and deployment instructions will be documented as development progresses.
+Future work: operator identity and tenancy, customer intake integrations, larger independently labelled datasets, provider-specific structured-output compatibility, and production deployment/telemetry. Git staging, commits and pushes remain the owner's responsibility.
 
 ## Author
 
-**Keeno Smith**
-
-Full-Stack Software Engineer | AI Engineer
-
-Part of an independent software engineering portfolio exploring production-oriented AI applications, distributed architectures and reliable cloud systems.
+**Keeno Smith** — Full-Stack Software Engineer | AI Engineer

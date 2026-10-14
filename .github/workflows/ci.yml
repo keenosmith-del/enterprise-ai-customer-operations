@@ -1,0 +1,43 @@
+name: Verify Version 1
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: operations
+          POSTGRES_PASSWORD: operations_local
+          POSTGRES_DB: operations_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U operations -d operations_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:4-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: operations
+          RABBITMQ_DEFAULT_PASS: operations_local
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://operations:operations_local@localhost:5432/operations_test
+      RABBITMQ_URL: amqp://operations:operations_local@localhost:5672
+      ADMIN_TOKEN: ci-operator-token-only
+      LLM_PROVIDER: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: npm}
+      - run: npm ci
+      - run: npm exec -w backend -- prisma generate
+      - run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build

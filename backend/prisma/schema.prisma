@@ -1,0 +1,223 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model CustomerCase {
+  id             String          @id @default(uuid()) @db.Uuid
+  customerName   String
+  customerEmail  String
+  subject        String
+  description    String
+  source         String          @default("Web")
+  synthetic      Boolean         @default(false)
+  status         String          @default("New")
+  category       String?
+  priority       String?
+  team           String?
+  summary        String?
+  response       String?
+  reviewRequired Boolean         @default(false)
+  reviewReason   String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  jobs           ProcessingJob[]
+  events         CaseEvent[]
+  reviews        CaseReview[]
+
+  @@index([status, createdAt])
+  @@index([category, priority])
+}
+
+model CaseEvent {
+  id        String       @id @default(uuid()) @db.Uuid
+  caseId    String       @db.Uuid
+  case      CustomerCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  type      String
+  message   String
+  metadata  Json?
+  createdAt DateTime     @default(now())
+
+  @@index([caseId, createdAt])
+}
+
+model CaseReview {
+  id        String       @id @default(uuid()) @db.Uuid
+  caseId    String       @db.Uuid
+  case      CustomerCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  operator  String
+  action    String
+  before    Json
+  after     Json
+  createdAt DateTime     @default(now())
+}
+
+model PromptTemplate {
+  id       String          @id @default(uuid()) @db.Uuid
+  name     String          @unique
+  purpose  String
+  kind     String          @unique
+  versions PromptVersion[]
+}
+
+model PromptVersion {
+  id                 String             @id @default(uuid()) @db.Uuid
+  templateId         String             @db.Uuid
+  template           PromptTemplate     @relation(fields: [templateId], references: [id])
+  version            Int
+  content            String
+  active             Boolean            @default(false)
+  publishedAt        DateTime?
+  activationOverride String?
+  createdAt          DateTime           @default(now())
+  activations        PromptActivation[]
+  runs               EvaluationRun[]    @relation("classificationRunPrompt")
+  responseRuns       EvaluationRun[]    @relation("responseRunPrompt")
+  classificationJobs ProcessingJob[]    @relation("classificationJobPrompt")
+  responseJobs       ProcessingJob[]    @relation("responseJobPrompt")
+
+  @@unique([templateId, version])
+}
+
+model PromptActivation {
+  id             String        @id @default(uuid()) @db.Uuid
+  promptId       String        @db.Uuid
+  prompt         PromptVersion @relation(fields: [promptId], references: [id])
+  operator       String
+  overrideReason String?
+  createdAt      DateTime      @default(now())
+}
+
+model EvaluationDataset {
+  id          String              @id @default(uuid()) @db.Uuid
+  name        String              @unique
+  description String
+  examples    EvaluationExample[]
+  runs        EvaluationRun[]
+}
+
+model EvaluationExample {
+  id               String             @id @default(uuid()) @db.Uuid
+  datasetId        String             @db.Uuid
+  dataset          EvaluationDataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  key              String
+  subject          String
+  description      String
+  expectedCategory String
+  expectedPriority String
+  results          EvaluationResult[]
+
+  @@unique([datasetId, key])
+}
+
+model EvaluationRun {
+  id               String             @id @default(uuid()) @db.Uuid
+  datasetId        String             @db.Uuid
+  dataset          EvaluationDataset  @relation(fields: [datasetId], references: [id])
+  promptId         String             @db.Uuid
+  prompt           PromptVersion      @relation("classificationRunPrompt", fields: [promptId], references: [id])
+  responsePromptId String             @db.Uuid
+  responsePrompt   PromptVersion      @relation("responseRunPrompt", fields: [responsePromptId], references: [id])
+  status           String             @default("Queued")
+  provider         String
+  model            String
+  simulated        Boolean
+  metrics          Json?
+  createdAt        DateTime           @default(now())
+  completedAt      DateTime?
+  results          EvaluationResult[]
+  jobs             ProcessingJob[]
+}
+
+model EvaluationResult {
+  id              String            @id @default(uuid()) @db.Uuid
+  runId           String            @db.Uuid
+  run             EvaluationRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  exampleId       String            @db.Uuid
+  example         EvaluationExample @relation(fields: [exampleId], references: [id])
+  output          Json?
+  schemaValid     Boolean
+  categoryCorrect Boolean
+  priorityCorrect Boolean
+  latencyMs       Int
+  inputTokens     Int?
+  outputTokens    Int?
+  cost            Float?
+  error           String?
+
+  @@unique([runId, exampleId])
+}
+
+model ProcessingJob {
+  id                     String              @id @default(uuid()) @db.Uuid
+  kind                   String
+  caseId                 String?             @db.Uuid
+  case                   CustomerCase?       @relation(fields: [caseId], references: [id])
+  evaluationId           String?             @db.Uuid
+  evaluation             EvaluationRun?      @relation(fields: [evaluationId], references: [id])
+  classificationPromptId String              @db.Uuid
+  classificationPrompt   PromptVersion       @relation("classificationJobPrompt", fields: [classificationPromptId], references: [id])
+  responsePromptId       String              @db.Uuid
+  responsePrompt         PromptVersion       @relation("responseJobPrompt", fields: [responsePromptId], references: [id])
+  correlationId          String
+  state                  String              @default("Queued")
+  attempt                Int                 @default(0)
+  simulation             String?
+  replayOf               String?             @unique @db.Uuid
+  previousJob            ProcessingJob?      @relation("JobReplay", fields: [replayOf], references: [id])
+  replay                 ProcessingJob?      @relation("JobReplay")
+  leaseUntil             DateTime?
+  leaseOwner             String?
+  nextAttemptAt          DateTime            @default(now())
+  result                 Json?
+  error                  String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  attempts               ProcessingAttempt[]
+  outbox                 OutboxEvent[]
+
+  @@index([state, leaseUntil])
+  @@index([caseId])
+}
+
+model ProcessingAttempt {
+  id            String        @id @default(uuid()) @db.Uuid
+  jobId         String        @db.Uuid
+  job           ProcessingJob @relation(fields: [jobId], references: [id])
+  number        Int
+  worker        String
+  status        String
+  error         String?
+  errorCategory String?
+  durationMs    Int?
+  startedAt     DateTime      @default(now())
+  completedAt   DateTime?
+
+  @@unique([jobId, number])
+}
+
+model OutboxEvent {
+  id          String        @id @default(uuid()) @db.Uuid
+  jobId       String        @db.Uuid
+  job         ProcessingJob @relation(fields: [jobId], references: [id])
+  payload     Json
+  destination String        @default("work")
+  availableAt DateTime      @default(now())
+  publishedAt DateTime?
+  attempts    Int           @default(0)
+  error       String?
+  leaseUntil  DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([publishedAt, availableAt])
+}
+
+model WorkerHeartbeat {
+  name     String   @id
+  lastSeen DateTime @default(now())
+  provider String
+}
